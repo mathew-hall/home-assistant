@@ -23,6 +23,7 @@ SUPPORT_TIKTECK_LED = (SUPPORT_BRIGHTNESS | SUPPORT_RGB_COLOR)
 DEVICE_SCHEMA = vol.Schema({
     vol.Optional(CONF_NAME): cv.string,
     vol.Required(CONF_PASSWORD): cv.string,
+    vol.Optional('drop_idle_connection'): cv.boolean
 })
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
@@ -39,6 +40,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         device['name'] = device_config[CONF_NAME]
         device['password'] = device_config[CONF_PASSWORD]
         device['address'] = address
+        device['drop_idle_connection'] = device_config['drop_idle_connection']
         light = TikteckLight(device)
         if light.is_valid:
             lights.append(light)
@@ -56,16 +58,27 @@ class TikteckLight(Light):
         self._name = device['name']
         self._address = device['address']
         self._password = device['password']
+        self._drop_idle = device['drop_idle_connection']
         self._brightness = 255
         self._rgb = [255, 255, 255]
         self._state = False
         self.is_valid = True
         self._bulb = tikteck.tikteck(
             self._address, "Smart Light", self._password)
-        if self._bulb.connect() is False:
+        if self.connect_bt() is False:
             self.is_valid = False
             _LOGGER.error(
                 "Failed to connect to bulb %s, %s", self._address, self._name)
+        if self._drop_idle:
+            self.disconnect_bt()
+
+    def connect_bt(self):
+        """Connect to the BTLE device"""
+        return self._bulb.connect()
+
+    def disconnect_bt(self):
+        """Drop the BTLE connection"""
+        self._bulb.device.disconnect()
 
     @property
     def unique_id(self):
@@ -109,7 +122,12 @@ class TikteckLight(Light):
 
     def set_state(self, red, green, blue, brightness):
         """Set the bulb state."""
-        return self._bulb.set_state(red, green, blue, brightness)
+        if self._drop_idle:
+            self.connect_bt()
+        result = self._bulb.set_state(red, green, blue, brightness)
+        if self._drop_idle:
+            self.disconnect_bt()
+        return result
 
     def turn_on(self, **kwargs):
         """Turn the specified light on."""
